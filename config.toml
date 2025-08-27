@@ -1,0 +1,29 @@
+# Configuration for the Interactive Smart Agent
+
+[llm]
+# The primary LLM model to use with Ollama
+model = "llama3"
+# The host URL for the Ollama server
+host = "http://localhost:11434"
+
+[external_apis]
+# Placeholders for potential external "expert" APIs
+# openai_api_key = "your-key-here"
+# manus_api_key = "your-key-here"
+
+[security]
+# A list of files that the agent is not allowed to overwrite.
+protected_files = [
+    "config.toml",
+    "pyproject.toml",
+    "backend/main.py",
+    "frontend/index.html",
+    "frontend/script.js"
+]
+
+# A list of directories the agent cannot access.
+# The agent is already prevented from using '..' or absolute paths.
+# This list can add more specific restrictions if needed.
+# blocked_directories = [
+#     "/home/user/.ssh",
+# ]
