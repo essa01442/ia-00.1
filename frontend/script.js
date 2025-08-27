@@ -1,110 +1,133 @@
 document.addEventListener('DOMContentLoaded', () => {
-    const taskInput = document.getElementById('task-input');
-    const startButton = document.getElementById('start-button');
-    const logContainer = document.getElementById('log');
-    let socket = null;
+    const messageList = document.getElementById('message-list');
+    const chatForm = document.getElementById('chat-form');
+    const messageInput = document.getElementById('message-input');
+    const controlButton = document.getElementById('control-button');
+    const pauseOverlay = document.getElementById('pause-overlay');
+    const pauseMessage = document.getElementById('pause-message');
+    const resumeButton = document.getElementById('resume-button');
 
-    startButton.addEventListener('click', () => {
-        if (socket && socket.readyState === WebSocket.OPEN) {
-            // If socket is open, the button is for stopping
-            socket.send('stop');
-            updateUIForStop();
+    let socket = null;
+    let agentIsActive = false;
+
+    // --- Event Listeners ---
+    chatForm.addEventListener('submit', (e) => {
+        e.preventDefault();
+        const message = messageInput.value.trim();
+        if (!message) return;
+
+        addMessageToUI(message, 'user');
+        messageInput.value = '';
+
+        if (!agentIsActive) {
+            startAgent(message);
         } else {
-            // Otherwise, the button is for starting
-            startAgent();
+            // Send subsequent messages to the running agent
+            if (socket && socket.readyState === WebSocket.OPEN) {
+                socket.send(message);
+            }
         }
     });
 
-    function startAgent() {
-        const task = taskInput.value;
-        if (!task) {
-            alert('Please enter a task for the agent.');
-            return;
+    controlButton.addEventListener('click', () => {
+        if (agentIsActive && socket) {
+            socket.send('stop'); // Graceful stop
+            socket.close();
+            addMessageToUI('تم إيقاف الوكيل. أُعيدت السيطرة لك.', 'agent status');
+            setAgentState(false);
+        }
+    });
+
+    resumeButton.addEventListener('click', () => {
+        if (socket && socket.readyState === WebSocket.OPEN) {
+            socket.send('resume');
+            pauseOverlay.classList.add('hidden');
+        }
+    });
+
+    // --- UI Functions ---
+    function addMessageToUI(content, type, data = {}) {
+        const messageDiv = document.createElement('div');
+        messageDiv.classList.add('message', type);
+
+        let htmlContent = '';
+
+        if (type === 'user') {
+            htmlContent = escapeHtml(content);
+        } else if (data.thought) {
+            messageDiv.classList.add('thought');
+            htmlContent = `<strong>فكرة:</strong> <em>${escapeHtml(data.thought)}</em>`;
+        } else if (data.action) {
+            messageDiv.classList.add('action');
+            let params = JSON.stringify(data.params || {});
+            htmlContent = `<strong>إجراء:</strong> ${data.action}(${params})`;
+        } else if (data.type === 'action_result') {
+            messageDiv.classList.add('action');
+            htmlContent = `<strong>نتيجة ${data.tool}:</strong><pre>${escapeHtml(data.output)}</pre>`;
+        } else if (data.type === 'error') {
+            messageDiv.classList.add('error');
+            htmlContent = `<strong>خطأ:</strong> ${escapeHtml(data.message)}`;
+        } else if (data.type === 'status' || type === 'agent status') {
+             messageDiv.classList.add('status');
+             htmlContent = `<strong>النظام:</strong> ${escapeHtml(content || data.message)}`;
         }
 
-        // Connect to the WebSocket server
-        socket = new WebSocket('ws://localhost:8000/ws/execute_task');
+        messageDiv.innerHTML = htmlContent;
+        messageList.appendChild(messageDiv);
+        messageList.scrollTop = messageList.scrollHeight;
+    }
 
-        updateUIForStart();
+    function handlePause(data) {
+        pauseMessage.textContent = data.message || "توقف الوكيل مؤقتًا لتدخلك.";
+        pauseOverlay.classList.remove('hidden');
+    }
+
+    function setAgentState(isActive) {
+        agentIsActive = isActive;
+        if (isActive) {
+            controlButton.textContent = 'استلام التحكم';
+            controlButton.disabled = false;
+        } else {
+            controlButton.textContent = 'تم إيقاف الوكيل';
+            controlButton.disabled = true;
+        }
+    }
+
+    // --- WebSocket Logic ---
+    function startAgent(initialTask) {
+        socket = new WebSocket('ws://localhost:8000/ws/execute_task');
+        setAgentState(true);
 
         socket.onopen = () => {
-            logContainer.innerHTML = '<p>Connection established. Sending task to agent...</p>';
-            socket.send(task);
+            addMessageToUI('تم الاتصال بالوكيل...', 'agent status');
+            socket.send(initialTask);
         };
 
         socket.onmessage = (event) => {
             const data = JSON.parse(event.data);
-            renderLogEntry(data);
+
+            if (data.type === 'pause') {
+                handlePause(data);
+            } else {
+                addMessageToUI(null, 'agent', data);
+            }
         };
 
         socket.onerror = (error) => {
             console.error('WebSocket Error:', error);
-            renderLogEntry({ type: 'error', message: 'WebSocket connection failed.' });
-            updateUIForStop();
+            addMessageToUI('فشل الاتصال بالوكيل.', 'agent error');
+            setAgentState(false);
         };
 
         socket.onclose = () => {
-            console.log('WebSocket connection closed.');
-            if (startButton.textContent.includes('Stop')) {
-                 renderLogEntry({ type: 'status', message: 'Connection closed.' });
+            if (agentIsActive) { // If it was closed while active
+                addMessageToUI('انقطع الاتصال بالوكيل.', 'agent status');
             }
-            updateUIForStop();
+            setAgentState(false);
         };
     }
 
-    function updateUIForStart() {
-        logContainer.innerHTML = '<p>Attempting to connect to agent...</p>';
-        startButton.textContent = 'Stop Agent';
-        startButton.style.backgroundColor = '#e53e3e'; // Red for stop
-        taskInput.disabled = true;
-    }
-
-    function updateUIForStop() {
-        if (socket) {
-            socket.close();
-            socket = null;
-        }
-        startButton.textContent = 'Start Agent';
-        startButton.style.backgroundColor = '#4a90e2'; // Blue for start
-        taskInput.disabled = false;
-    }
-
-    let isFirstMessage = true;
-    function renderLogEntry(entry) {
-        if (isFirstMessage) {
-            logContainer.innerHTML = ''; // Clear the initial status message
-            isFirstMessage = false;
-        }
-
-        const entryDiv = document.createElement('div');
-        entryDiv.className = 'log-entry';
-
-        if (entry.thought) {
-            entryDiv.classList.add('log-thought');
-            entryDiv.innerHTML = `<strong>Thought:</strong> ${escapeHtml(entry.thought)}`;
-        } else if (entry.action) {
-            entryDiv.classList.add('log-action');
-            let params = JSON.stringify(entry.params || {});
-            entryDiv.innerHTML = `<strong>Action:</strong> ${entry.action}(${params})`;
-        } else if (entry.type === 'action_result') {
-             entryDiv.classList.add('log-action-result');
-             entryDiv.innerHTML = `<strong>Result from ${entry.tool}:</strong><pre>${escapeHtml(entry.output)}</pre>`;
-        } else if (entry.type === 'error') {
-            entryDiv.classList.add('log-error');
-            entryDiv.innerHTML = `<strong>Error:</strong> ${escapeHtml(entry.message)}`;
-        } else if (entry.type === 'status') {
-            entryDiv.classList.add('log-status');
-            entryDiv.innerHTML = `<strong>Status:</strong> ${escapeHtml(entry.message)}`;
-        } else {
-            // Fallback for unexpected message format
-            entryDiv.classList.add('log-status');
-            entryDiv.innerHTML = `<strong>System:</strong> ${escapeHtml(JSON.stringify(entry))}`;
-        }
-
-        logContainer.appendChild(entryDiv);
-        logContainer.scrollTop = logContainer.scrollHeight;
-    }
-
+    // --- Utility ---
     function escapeHtml(unsafe) {
         if (typeof unsafe !== 'string') {
             unsafe = JSON.stringify(unsafe);

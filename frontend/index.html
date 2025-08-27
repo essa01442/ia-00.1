@@ -1,22 +1,32 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ar" dir="rtl">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Interactive Agent</title>
+    <title>الوكيل الذكي التفاعلي</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <div id="app">
-        <h1>Interactive Smart Agent</h1>
-        <div id="controls">
-            <input type="text" id="task-input" placeholder="Enter your task for the agent...">
-            <button id="start-button">Start Agent</button>
+    <div id="chat-container">
+        <header>
+            <h1>الوكيل الذكي التفاعلي</h1>
+            <button id="control-button" class="control-btn stop-btn">استلام التحكم</button>
+        </header>
+        <div id="message-list">
+            <!-- Messages will be appended here -->
         </div>
-        <div id="log-container">
-            <h2>Agent's Log</h2>
-            <div id="log"></div>
+        <div id="pause-overlay" class="hidden">
+            <div class="pause-box">
+                <p id="pause-message"></p>
+                <button id="resume-button">استئناف</button>
+            </div>
         </div>
+        <footer>
+            <form id="chat-form">
+                <input type="text" id="message-input" placeholder="أدخل مهمتك أو توجيهك هنا..." autocomplete="off">
+                <button type="submit">إرسال</button>
+            </form>
+        </footer>
     </div>
     <script src="script.js"></script>
 </body>
