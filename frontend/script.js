@@ -9,6 +9,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
     let socket = null;
     let agentIsActive = false;
+    let reconnectAttempts = 0;
+    const maxReconnectAttempts = 5;
+    const baseReconnectDelay = 1000; // 1 second
 
     // --- Event Listeners ---
     chatForm.addEventListener('submit', (e) => {
@@ -19,22 +22,21 @@ document.addEventListener('DOMContentLoaded', () => {
         addMessageToUI(message, 'user');
         messageInput.value = '';
 
-        if (!agentIsActive) {
-            startAgent(message);
-        } else {
-            // Send subsequent messages to the running agent
-            if (socket && socket.readyState === WebSocket.OPEN) {
-                socket.send(message);
-            }
+        if (!agentIsActive && (!socket || socket.readyState === WebSocket.CLOSED)) {
+            // If agent isn't active and socket is not open, start a new session
+            connect(message);
+        } else if (socket && socket.readyState === WebSocket.OPEN) {
+            // If socket is open, just send the message
+            socket.send(message);
         }
     });
 
     controlButton.addEventListener('click', () => {
         if (agentIsActive && socket) {
-            socket.send('stop'); // Graceful stop
+            // User-initiated stop, don't try to reconnect
+            reconnectAttempts = maxReconnectAttempts + 1; // Prevent reconnection
+            socket.send('stop');
             socket.close();
-            addMessageToUI('تم إيقاف الوكيل. أُعيدت السيطرة لك.', 'agent status');
-            setAgentState(false);
         }
     });
 
@@ -45,11 +47,61 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
+    // --- WebSocket Connection Logic ---
+    function connect(initialTask) {
+        const uri = "ws://localhost:8000/ws/execute_task";
+        socket = new WebSocket(uri);
+        setAgentState(true);
+        addMessageToUI('جاري الاتصال بالوكيل...', 'agent status');
+
+        socket.onopen = () => {
+            addMessageToUI('تم الاتصال بنجاح.', 'agent status');
+            reconnectAttempts = 0; // Reset on successful connection
+            if (initialTask) {
+                socket.send(initialTask);
+            }
+        };
+
+        socket.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+            if (data.type === 'pause') {
+                handlePause(data);
+            } else {
+                addMessageToUI(null, 'agent', data);
+            }
+        };
+
+        socket.onerror = (error) => {
+            console.error('WebSocket Error:', error);
+            addMessageToUI('حدث خطأ في الاتصال.', 'agent error');
+            // The onclose event will handle the reconnect logic
+        };
+
+        socket.onclose = (event) => {
+            setAgentState(false);
+            if (reconnectAttempts > maxReconnectAttempts) {
+                addMessageToUI('تم إنهاء الاتصال. أعد تحميل الصفحة للمحاولة مرة أخرى.', 'agent status');
+                return;
+            }
+            if (event.wasClean) {
+                addMessageToUI('انقطع الاتصال بالوكيل.', 'agent status');
+            } else {
+                // Connection died, try to reconnect
+                const delay = Math.pow(2, reconnectAttempts) * baseReconnectDelay;
+                reconnectAttempts++;
+                addMessageToUI(`انقطع الاتصال. جاري محاولة إعادة الاتصال بعد ${delay / 1000} ثانية... (محاولة ${reconnectAttempts}/${maxReconnectAttempts})`, 'agent error');
+                setTimeout(() => {
+                    // We don't have an initial task for reconnect, the user will have to send a new message
+                    connect(null);
+                }, delay);
+            }
+        };
+    }
+
     // --- UI Functions ---
     function addMessageToUI(content, type, data = {}) {
         const messageDiv = document.createElement('div');
         messageDiv.classList.add('message', type);
-
         let htmlContent = '';
 
         if (type === 'user') {
@@ -88,46 +140,11 @@ document.addEventListener('DOMContentLoaded', () => {
             controlButton.textContent = 'استلام التحكم';
             controlButton.disabled = false;
         } else {
-            controlButton.textContent = 'تم إيقاف الوكيل';
+            controlButton.textContent = 'الوكيل متوقف';
             controlButton.disabled = true;
         }
     }
 
-    // --- WebSocket Logic ---
-    function startAgent(initialTask) {
-        socket = new WebSocket('ws://localhost:8000/ws/execute_task');
-        setAgentState(true);
-
-        socket.onopen = () => {
-            addMessageToUI('تم الاتصال بالوكيل...', 'agent status');
-            socket.send(initialTask);
-        };
-
-        socket.onmessage = (event) => {
-            const data = JSON.parse(event.data);
-
-            if (data.type === 'pause') {
-                handlePause(data);
-            } else {
-                addMessageToUI(null, 'agent', data);
-            }
-        };
-
-        socket.onerror = (error) => {
-            console.error('WebSocket Error:', error);
-            addMessageToUI('فشل الاتصال بالوكيل.', 'agent error');
-            setAgentState(false);
-        };
-
-        socket.onclose = () => {
-            if (agentIsActive) { // If it was closed while active
-                addMessageToUI('انقطع الاتصال بالوكيل.', 'agent status');
-            }
-            setAgentState(false);
-        };
-    }
-
-    // --- Utility ---
     function escapeHtml(unsafe) {
         if (typeof unsafe !== 'string') {
             unsafe = JSON.stringify(unsafe);
