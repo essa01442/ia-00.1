@@ -36,6 +36,13 @@ COPY frontend/ ./frontend/
 COPY config.toml .
 COPY tests/ ./tests/
 
+# Create a non-root user to run the application
+RUN groupadd -r appgroup && useradd --no-log-init -r -g appgroup appuser
+RUN chown -R appuser:appgroup /app
+
+# Switch to the non-root user
+USER appuser
+
 # Expose the port the app runs on
 EXPOSE 8000
 

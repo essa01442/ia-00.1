@@ -1,6 +1,7 @@
 import os
 import asyncio
 from playwright.async_api import async_playwright, Playwright
+from pydantic import BaseModel, ValidationError
 
 from .logger import log
 import tomli
@@ -15,11 +16,57 @@ except FileNotFoundError:
 PROTECTED_FILES = config.get("security", {}).get("protected_files", [])
 
 
+# --- Pydantic Models for Input Validation ---
+class ListFilesArgs(BaseModel):
+    path: str = "."
+
+class ReadFileArgs(BaseModel):
+    path: str
+
+class WriteFileArgs(BaseModel):
+    path: str
+    content: str
+
+class BrowserAttachArgs(BaseModel):
+    cdp_url: str
+
+class BrowserNavigateArgs(BaseModel):
+    url: str
+
+class BrowserClickArgs(BaseModel):
+    selector: str
+
+class BrowserTypeTextArgs(BaseModel):
+    selector: str
+    text: str
+
+class BrowserTypeAndSubmitArgs(BaseModel):
+    type_selector: str
+    text: str
+    submit_selector: str
+
+class BrowserWaitForResponseArgs(BaseModel):
+    selector: str
+    timeout: int = 30000
+
+
 class Toolbox:
     def __init__(self):
         self.playwright: Playwright | None = None
         self.browser = None
         self.page = None
+        # Mapping tool names to their Pydantic validation models
+        self.tool_validators = {
+            "list_files": ListFilesArgs,
+            "read_file": ReadFileArgs,
+            "write_file": WriteFileArgs,
+            "browser_attach": BrowserAttachArgs,
+            "browser_navigate": BrowserNavigateArgs,
+            "browser_click": BrowserClickArgs,
+            "browser_type_text": BrowserTypeTextArgs,
+            "browser_type_and_submit": BrowserTypeAndSubmitArgs,
+            "browser_wait_for_response": BrowserWaitForResponseArgs,
+        }
 
     async def _ensure_playwright(self):
         if self.playwright is None:
@@ -113,6 +160,7 @@ class Toolbox:
         except Exception as e: return f"Error writing file: {e}"
 
     def get_tools_json_schema(self):
+        # ... (same as before)
         return {
             "list_files": { "description": "Lists files in a directory.", "params": {"path": {"type": "string"}}},
             "read_file": { "description": "Reads a file.", "params": {"path": {"type": "string"}}},
@@ -128,6 +176,17 @@ class Toolbox:
         }
 
     async def execute_tool(self, tool_name: str, params: dict):
+        # --- NEW VALIDATION LOGIC ---
+        if tool_name in self.tool_validators:
+            validator = self.tool_validators[tool_name]
+            try:
+                # Validate and get the coerced parameters
+                validated_params = validator(**params).dict()
+                params = validated_params
+            except ValidationError as e:
+                log.warning(f"Tool {tool_name} validation failed for params: {params}. Error: {e}")
+                return f"Error: Invalid parameters for tool '{tool_name}'. {e}"
+
         tool_map = {
             "list_files": self.list_files, "read_file": self.read_file, "write_file": self.write_file,
             "browser_attach": self.browser_attach, "browser_navigate": self.browser_navigate,
@@ -137,5 +196,6 @@ class Toolbox:
             "browser_extract_text": self.browser_extract_text,
         }
         if tool_name not in tool_map: raise ValueError(f"Unknown tool: {tool_name}")
+
         tool_function = tool_map[tool_name]
         return await tool_function(**params) if asyncio.iscoroutinefunction(tool_function) else tool_function(**params)
